@@ -1,0 +1,701 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>No-jump live viewer</title>
+<style>
+  :root {
+    --bg: #0c0f13; --panel: #151a20; --line: #262c35; --text: #e6e9ee; --muted: #8b94a3;
+    --blue: #3d8bff; --orange: #ff8a3d; --ball: #f2f2f2; --good: #3ecf8e; --bad: #ff5d5d; --warn: #f5c451;
+    --field: #13351f; --field-line: #2f6b45; --pad: #d8b23a;
+  }
+  * { box-sizing: border-box; }
+  body { margin: 0; background: var(--bg); color: var(--text); font: 13px/1.4 system-ui, -apple-system, "Segoe UI", sans-serif; }
+  header { display: flex; align-items: baseline; gap: 16px; padding: 12px 18px; border-bottom: 1px solid var(--line); flex-wrap: wrap; }
+  header h1 { font-size: 16px; margin: 0; font-weight: 600; }
+  header .sub { color: var(--muted); }
+  .dot { display: inline-block; width: 8px; height: 8px; border-radius: 50%; background: var(--muted); margin-right: 6px; vertical-align: middle; }
+  .dot.live { background: var(--good); box-shadow: 0 0 8px var(--good); }
+  .dot.stale { background: var(--warn); } .dot.dead { background: var(--bad); }
+  main { display: grid; grid-template-columns: minmax(0, 1.5fr) minmax(320px, 1fr); gap: 14px; padding: 14px 18px; }
+  @media (max-width: 1100px) { main { grid-template-columns: 1fr; } }
+  .panel { background: var(--panel); border: 1px solid var(--line); border-radius: 10px; padding: 12px 14px; min-width: 0; }
+  .panel h2 { margin: 0 0 8px; font-size: 12px; font-weight: 600; color: var(--muted); text-transform: uppercase; letter-spacing: .06em; }
+  .scorebar { display: flex; justify-content: space-between; align-items: center; margin-bottom: 8px; gap: 10px; flex-wrap: wrap; }
+  .score { font-size: 26px; font-weight: 700; font-variant-numeric: tabular-nums; }
+  .score .b { color: var(--blue); } .score .o { color: var(--orange); }
+  .who { color: var(--muted); font-size: 12px; } .who b { color: var(--text); font-weight: 600; }
+  .viewport { position: relative; width: 100%; aspect-ratio: 16 / 9; border-radius: 8px; overflow: hidden; background: #05070a; }
+  .viewport canvas.full { position: absolute; inset: 0; width: 100% !important; height: 100% !important; display: block; }
+  .viewport canvas.full[hidden] { display: none !important; }
+  #field2d { background: var(--field); }
+  .toolbar { display: flex; flex-wrap: wrap; gap: 6px; margin: 8px 0 0; align-items: center; }
+  .toolbar .sep { width: 1px; height: 18px; background: var(--line); margin: 0 4px; }
+  button { background: #1d232b; color: var(--text); border: 1px solid var(--line); border-radius: 6px; padding: 4px 10px; font: inherit; font-size: 12px; cursor: pointer; }
+  button:hover { border-color: #3a4350; }
+  button.on { background: #24324a; border-color: #3d8bff; color: #cfe0ff; }
+  .hint { color: var(--muted); font-size: 11px; }
+  .overlay { position: absolute; left: 0; right: 0; top: 10px; display: flex; justify-content: center; pointer-events: none; }
+  .hud { background: #000000a0; border-radius: 8px; padding: 4px 14px; font-weight: 700; font-size: 20px; font-variant-numeric: tabular-nums; display: flex; gap: 14px; align-items: center; backdrop-filter: blur(4px); }
+  .hud .b { color: var(--blue); } .hud .o { color: var(--orange); } .hud .clk { color: #fff; font-size: 16px; }
+  .goalflash { position: absolute; inset: 0; display: flex; align-items: center; justify-content: center; font-size: 46px; font-weight: 800; pointer-events: none; opacity: 0; transition: opacity .25s; text-shadow: 0 2px 16px #000; }
+  .boostgauge { position: absolute; bottom: 12px; width: 64px; height: 64px; pointer-events: none; }
+  .boostgauge.left { left: 12px; } .boostgauge.right { right: 12px; }
+  .cars { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; margin-top: 10px; }
+  .car { border: 1px solid var(--line); border-radius: 8px; padding: 8px 10px; }
+  .car .name { font-weight: 600; } .car.blue .name { color: var(--blue); } .car.orange .name { color: var(--orange); }
+  .bar { height: 6px; background: #252b33; border-radius: 3px; overflow: hidden; margin-top: 4px; }
+  .bar > i { display: block; height: 100%; background: var(--pad); width: 0; }
+  .kv { display: grid; grid-template-columns: auto 1fr; gap: 4px 12px; }
+  .kv div:nth-child(odd) { color: var(--muted); }
+  .num { font-variant-numeric: tabular-nums; }
+  .big { font-size: 22px; font-weight: 700; font-variant-numeric: tabular-nums; }
+  .stats { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 10px; margin-bottom: 10px; }
+  .stat .label { color: var(--muted); font-size: 11px; }
+  .badges { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 8px; }
+  .badge { border: 1px solid var(--line); border-radius: 999px; padding: 2px 9px; font-size: 12px; }
+  .badge.ok { border-color: #1f5c43; color: var(--good); } .badge.bad { border-color: #6b2a2a; color: var(--bad); } .badge.warn { border-color: #6b5a24; color: var(--warn); }
+  canvas.chart { width: 100%; height: 130px; display: block; }
+  .chartwrap { margin-top: 10px; }
+  .legend { display: flex; flex-wrap: wrap; gap: 4px 12px; font-size: 11px; color: var(--muted); margin-top: 2px; }
+  .legend span::before { content: ""; display: inline-block; width: 10px; height: 3px; margin-right: 5px; vertical-align: middle; background: var(--c); }
+  .mono { font-family: ui-monospace, "Cascadia Mono", Consolas, monospace; font-size: 11px; color: var(--muted); word-break: break-all; }
+  .err { color: var(--bad); font-weight: 600; margin-top: 8px; white-space: pre-wrap; }
+  .perf { position: absolute; top: 10px; left: 10px; background: #000000b0; border-radius: 6px; padding: 6px 9px; font: 11px/1.45 ui-monospace, Consolas, monospace; color: #cfd6df; pointer-events: none; white-space: pre; }
+  .perf b { color: #fff; } .perf .bad { color: var(--bad); } .perf .ok { color: var(--good); }
+  select { background: #1d232b; color: var(--text); border: 1px solid var(--line); border-radius: 6px; padding: 3px 6px; font: inherit; font-size: 12px; }
+</style>
+</head>
+<body>
+<header>
+  <h1><span id="liveDot" class="dot"></span>No-jump live viewer</h1>
+  <span class="sub" id="runName">connecting…</span>
+  <span class="sub" id="simState"></span>
+</header>
+
+<main>
+  <section class="panel">
+    <div class="scorebar">
+      <div class="score"><span class="b" id="scoreB">0</span> – <span class="o" id="scoreO">0</span></div>
+      <div class="who" id="matchWho">waiting for the first frame…</div>
+      <div class="big num" id="clock">5:00</div>
+    </div>
+    <div class="viewport" id="viewport">
+      <canvas id="field2d" class="full" width="1600" height="900" hidden></canvas>
+      <div class="overlay"><div class="hud"><span class="b" id="hudB">0</span><span class="clk" id="hudClock">5:00</span><span class="o" id="hudO">0</span></div></div>
+      <canvas class="boostgauge left" id="gaugeB" width="128" height="128"></canvas>
+      <canvas class="boostgauge right" id="gaugeO" width="128" height="128"></canvas>
+      <div class="goalflash" id="goalFlash">GOAL</div>
+      <div class="perf" id="perf" hidden></div>
+    </div>
+    <div class="toolbar">
+      <button data-view="3d" class="on">3D</button><button data-view="2d">Top-down map</button>
+      <span class="sep"></span>
+      <span id="camButtons"><button data-cam="broadcast" class="on">Broadcast</button><button data-cam="ballcam">Ball cam (training bot)</button><button data-cam="overhead">Overhead</button><button data-cam="orbit">Free orbit</button></span>
+      <span class="sep"></span>
+      <label class="hint">quality <select id="quality"><option value="high">High</option><option value="balanced">Balanced</option><option value="low">Low (busy GPU)</option></select></label>
+      <button id="perfBtn">Stats</button>
+      <span class="hint" id="camHint"></span>
+    </div>
+    <div class="cars">
+      <div class="car blue"><div class="name" id="carBName">Blue</div>
+        <div class="kv num"><div>speed</div><div id="carBSpeed">–</div><div>boost</div><div id="carBBoostTxt">–</div></div>
+        <div class="bar"><i id="carBBoost"></i></div></div>
+      <div class="car orange"><div class="name" id="carOName">Orange</div>
+        <div class="kv num"><div>speed</div><div id="carOSpeed">–</div><div>boost</div><div id="carOBoostTxt">–</div></div>
+        <div class="bar"><i id="carOBoost"></i></div></div>
+    </div>
+    <div class="err" id="simError"></div>
+  </section>
+
+  <section class="panel">
+    <h2>Training</h2>
+    <div class="stats">
+      <div class="stat"><div class="label">total steps</div><div class="big num" id="steps">–</div></div>
+      <div class="stat"><div class="label">steps / s (realised)</div><div class="big num" id="sps">–</div></div>
+      <div class="stat"><div class="label">log updated</div><div class="big num" id="logAge">–</div></div>
+    </div>
+    <div class="kv num">
+      <div>stage</div><div id="stage">–</div>
+      <div>opponent</div><div id="oppCfg">–</div>
+      <div>newest archive</div><div id="archive">–</div>
+      <div>viewer plays</div><div id="viewerCkpt">–</div>
+    </div>
+    <div class="badges" id="badges"></div>
+    <div class="chartwrap"><h2>Steps over time</h2><canvas class="chart" id="chSteps"></canvas></div>
+    <div class="chartwrap"><h2>Realised steps / s</h2><canvas class="chart" id="chSps"></canvas></div>
+    <div class="chartwrap"><h2>Reward terms per step (unweighted)</h2><canvas class="chart" id="chRew"></canvas><div class="legend" id="lgRew"></div></div>
+    <div class="chartwrap"><h2>Trend rows: win rate</h2><canvas class="chart" id="chTrend"></canvas><div class="legend" id="lgTrend"></div></div>
+    <div class="chartwrap"><h2>Latest jump audit</h2><div class="mono" id="audit">–</div></div>
+  </section>
+</main>
+
+<script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/controls/OrbitControls.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/loaders/GLTFLoader.js"></script>
+<script>
+const $ = id => document.getElementById(id);
+const css = n => getComputedStyle(document.documentElement).getPropertyValue(n).trim();
+const fmt = n => n == null ? "–" : Number(n).toLocaleString("en-US");
+const lerp = (a, b, t) => a + (b - a) * t;
+const clamp = (v, a, b) => Math.max(a, Math.min(b, v));
+
+// Rocket League soccar, in uu (RocketSim RLConst)
+const A = { X: 4096, Y: 5120, Z: 2048, GOAL_DEPTH: 880, GOAL_W: 893, GOAL_H: 642.775, CORNER: 1152, BALL_R: 91.25 };
+// RocketSim CarConfig for the Octane: hitbox size and offset, wheel offsets, radii and suspension rest lengths
+const OCTANE = { hitbox: [120.507, 86.6994, 38.6591], hitboxOffset: [13.87566, 0, 20.755],
+  front: { r: 12.5, rest: 38.755, off: [51.25, 25.90, 20.755] }, back: { r: 15.0, rest: 37.055, off: [-33.75, 29.50, 20.755] } };
+
+// ================================================================= playback buffer (smooth, sim-time based)
+// The server sends physics at 60 Hz. Playback runs on its own clock about 0.2 s behind the newest frame,
+// and eases its speed to hold that buffer: if the simulator falls behind real time, playback slows
+// slightly instead of freezing on the last frame and stepping when the next arrives.
+const PLAYBACK_DELAY = 0.2;
+let pads = [], buf = [], simSpeed = 1, renderT = null, lastWall = null;
+let view = "3d", cam = "broadcast";
+function nowS() { return performance.now() / 1000; }
+function pushFrame(m) { buf.push(m); if (buf.length > 360) buf.shift(); }
+function sample() {
+  if (!buf.length) return null;
+  const now = nowS(), newest = buf[buf.length - 1].t;
+  if (renderT === null) { renderT = newest - PLAYBACK_DELAY; lastWall = now; }
+  const dt = Math.min(0.1, now - lastWall); lastWall = now;
+  const lead = newest - renderT;
+  if (lead > 1.5) renderT = newest - PLAYBACK_DELAY;                       // far behind (tab was hidden): jump
+  const rate = clamp(1 + 1.5 * (lead - PLAYBACK_DELAY), 0.3, 2.0);         // ease towards the target buffer
+  renderT = Math.min(renderT + dt * simSpeed * rate, newest);
+  const rt = renderT;
+  if (rt <= buf[0].t) return { a: buf[0], b: buf[0], k: 0 };
+  for (let i = buf.length - 1; i >= 0; i--) {
+    if (buf[i].t <= rt) {
+      const a = buf[i], b = buf[i + 1];
+      if (!b || b.reset) return { a, b: a, k: 0 };                          // newest, or a kickoff reset: no sliding
+      return { a, b, k: clamp((rt - a.t) / Math.max(1e-6, b.t - a.t), 0, 1) };
+    }
+  }
+  return { a: buf[0], b: buf[0], k: 0 };
+}
+function lerpVec(p, q, k) { return [lerp(p[0], q[0], k), lerp(p[1], q[1], k), lerp(p[2], q[2], k)]; }
+function carState(s, i) {
+  const a = s.a.cars[i], b = (s.b.cars[i] && s.b.cars[i].team === a.team) ? s.b.cars[i] : a, k = s.k;
+  return { ...a, x: lerp(a.x, b.x, k), y: lerp(a.y, b.y, k), z: lerp(a.z, b.z, k),
+    f: lerpVec(a.f || [Math.cos(a.yaw), Math.sin(a.yaw), 0], b.f || [Math.cos(b.yaw), Math.sin(b.yaw), 0], k),
+    u: lerpVec(a.u || [0, 0, 1], b.u || [0, 0, 1], k), yaw: a.yaw + angDiff(a.yaw, b.yaw) * k };
+}
+function angDiff(a, b) { let d = b - a; while (d > Math.PI) d -= 2 * Math.PI; while (d < -Math.PI) d += 2 * Math.PI; return d; }
+function ballState(s) { const a = s.a.ball, b = s.b.ball, k = s.k; return { x: lerp(a.x, b.x, k), y: lerp(a.y, b.y, k), z: lerp(a.z, b.z, k), w: a.w }; }
+
+// ================================================================= 3D
+const HAS3D = typeof THREE !== "undefined";
+let R3 = null;
+// RL (x, y, z), z up  ->  three (x, z, -y), y up. A proper rotation, so orientations and winding carry over.
+const V = (x, y, z) => new THREE.Vector3(x, z, -y);
+
+function floorTexture() {
+  const c = document.createElement("canvas"); c.width = 1024; c.height = 1280;
+  const g = c.getContext("2d");
+  // the texture is flipped vertically when mapped: canvas top = RL +y (orange's end)
+  const grad = g.createLinearGradient(0, 0, 0, 1280);
+  grad.addColorStop(0, "#6b3d17"); grad.addColorStop(0.16, "#2a5a2c"); grad.addColorStop(0.5, "#2f6a35"); grad.addColorStop(0.84, "#2a5a2c"); grad.addColorStop(1, "#173f69");
+  g.fillStyle = grad; g.fillRect(0, 0, 1024, 1280);
+  for (let i = 0; i < 20; i++) { g.fillStyle = i % 2 ? "#ffffff06" : "#0000000d"; g.fillRect(0, i * 64, 1024, 64); }
+  g.strokeStyle = "#f2f2f2c0"; g.lineWidth = 5;
+  g.beginPath(); g.moveTo(0, 640); g.lineTo(1024, 640); g.stroke();
+  g.beginPath(); g.arc(512, 640, 1000 / 8192 * 1024, 0, Math.PI * 2); g.stroke();
+  g.lineWidth = 4; g.strokeStyle = "#f2f2f280";
+  const bw = 2 * 1400 / 8192 * 1024, bd = 1200 / 10240 * 1280;
+  g.strokeRect(512 - bw / 2, 0, bw, bd); g.strokeRect(512 - bw / 2, 1280 - bd, bw, bd);
+  const t = new THREE.CanvasTexture(c); t.encoding = THREE.sRGBEncoding; t.anisotropy = 8; return t;
+}
+
+function ballTexture() {
+  // A close match of the standard ball's look: pale grey panels with dark seams (not the game's own asset).
+  const c = document.createElement("canvas"); c.width = 1024; c.height = 512;
+  const g = c.getContext("2d");
+  g.fillStyle = "#d7dce2"; g.fillRect(0, 0, 1024, 512);
+  const R = 34, h = R * Math.sqrt(3);
+  for (let row = -1; row < 512 / (1.5 * R) + 2; row++) {
+    for (let col = -1; col < 1024 / h + 2; col++) {
+      const cx = col * h + (row % 2 ? h / 2 : 0), cy = row * 1.5 * R;
+      g.beginPath();
+      for (let k = 0; k < 6; k++) { const a = Math.PI / 6 + k * Math.PI / 3; g.lineTo(cx + R * Math.cos(a), cy + R * Math.sin(a)); }
+      g.closePath();
+      g.fillStyle = (row + col) % 3 === 0 ? "#b9c0c9" : "#dfe4ea"; g.fill();
+      g.lineWidth = 4; g.strokeStyle = "#4a525c"; g.stroke();
+    }
+  }
+  const t = new THREE.CanvasTexture(c); t.encoding = THREE.sRGBEncoding; t.anisotropy = 8; return t;
+}
+
+// ----- the Octane, from RocketSim's car config (dimensions and wheel placement are the simulator's)
+function buildOctane(team) {
+  const colr = new THREE.Color(team === 0 ? 0x2c6fe8 : 0xe8702c);
+  const paint = new THREE.MeshStandardMaterial({ color: colr, metalness: 0.35, roughness: 0.35, emissive: colr, emissiveIntensity: 0.18 });
+  const trim = new THREE.MeshStandardMaterial({ color: 0x1b1e23, metalness: 0.2, roughness: 0.7 });
+  const glassM = new THREE.MeshStandardMaterial({ color: 0x0e1622, metalness: 0.6, roughness: 0.15 });
+  const tire = new THREE.MeshStandardMaterial({ color: 0x141414, roughness: 0.9 });
+  const rim = new THREE.MeshStandardMaterial({ color: 0x9aa3ad, metalness: 0.8, roughness: 0.3 });
+  const g = new THREE.Group();   // local axes: forward +x, up +y, right +z; origin = the car's physics origin
+  const [hl, hw, hh] = OCTANE.hitbox, [ox, , oz] = OCTANE.hitboxOffset;
+  const xr = ox - hl / 2, xf = ox + hl / 2, zb = oz - hh / 2, zt = oz + hh / 2;   // hitbox extents (x, up)
+  // side profile of the Octane over its hitbox (x forward, y up)
+  const P = [[xr + 1, zb + 7], [xr, zb + 24], [xr + 6, zt - 2], [xr + 22, zt + 5], [ox + 2, zt + 8], [ox + 22, zt - 3],
+             [xf - 18, zb + 25], [xf - 3, zb + 18], [xf, zb + 9], [xf - 8, zb + 3], [ox + 30, zb + 2], [xr + 26, zb + 3]];
+  const shape = new THREE.Shape(P.map(([x, y]) => new THREE.Vector2(x, y)));
+  const bodyW = hw - 10;
+  const body = new THREE.Mesh(new THREE.ExtrudeGeometry(shape, { depth: bodyW, bevelEnabled: true, bevelThickness: 4, bevelSize: 3, bevelSegments: 2 }), paint);
+  body.position.z = -bodyW / 2; g.add(body);
+  // cabin glass: the upper part of the profile, slightly proud of the body sides
+  const W = [[xr + 9, zt - 1], [xr + 23, zt + 4], [ox + 2, zt + 7], [ox + 20, zt - 3], [ox + 6, zt - 4], [xr + 14, zt - 3]];
+  const win = new THREE.Mesh(new THREE.ExtrudeGeometry(new THREE.Shape(W.map(([x, y]) => new THREE.Vector2(x, y))), { depth: bodyW + 7, bevelEnabled: false }), glassM);
+  win.position.z = -(bodyW + 7) / 2; g.add(win);
+  // spoiler on two struts, rear diffuser, lights
+  const spoiler = new THREE.Mesh(new THREE.BoxGeometry(10, 3, hw - 6), trim); spoiler.position.set(xr + 4, zt + 3, 0); g.add(spoiler);
+  for (const sz of [-18, 18]) { const st = new THREE.Mesh(new THREE.BoxGeometry(3, 6, 3), trim); st.position.set(xr + 6, zt - 1, sz); g.add(st); }
+  const diff = new THREE.Mesh(new THREE.BoxGeometry(8, 8, hw - 14), trim); diff.position.set(xr + 3, zb + 8, 0); g.add(diff);
+  const headM = new THREE.MeshBasicMaterial({ color: 0xfff4d6 }), tailM = new THREE.MeshBasicMaterial({ color: 0xff2a2a });
+  for (const sz of [-26, 26]) {
+    const hlight = new THREE.Mesh(new THREE.BoxGeometry(2, 3, 12), headM); hlight.position.set(xf - 1, zb + 14, sz); g.add(hlight);
+    const tl = new THREE.Mesh(new THREE.BoxGeometry(2, 4, 12), tailM); tl.position.set(xr - 1, zb + 22, sz); g.add(tl);
+  }
+  // wheels at RocketSim's offsets; at rest the contact point is off.z - rest, so the centre is that plus the radius
+  const addWheel = (w, side) => {
+    const cy = w.off[2] - w.rest + w.r, width = w === OCTANE.back ? 16 : 12;
+    const tg = new THREE.CylinderGeometry(w.r, w.r, width, 24); tg.rotateX(Math.PI / 2);
+    const t = new THREE.Mesh(tg, tire); t.position.set(w.off[0], cy, side * w.off[1]); g.add(t);
+    const rg = new THREE.CylinderGeometry(w.r * 0.58, w.r * 0.58, width + 1, 16); rg.rotateX(Math.PI / 2);
+    const r = new THREE.Mesh(rg, rim); r.position.copy(t.position); g.add(r);
+  };
+  for (const side of [-1, 1]) { addWheel(OCTANE.front, side); addWheel(OCTANE.back, side); }
+  return g;
+}
+
+function build3D() {
+  const vp = $("viewport");
+  const renderer = new THREE.WebGLRenderer({ antialias: true, powerPreference: "high-performance" });
+  renderer.setPixelRatio(qualityScale());
+  renderer.outputEncoding = THREE.sRGBEncoding;
+  renderer.domElement.classList.add("full");
+  vp.prepend(renderer.domElement);
+  const scene = new THREE.Scene();
+  scene.background = new THREE.Color(0x070a10);
+  const camera = new THREE.PerspectiveCamera(55, 16 / 9, 20, 60000);
+  camera.position.set(-A.X - 900, 1700, 0);
+  scene.add(new THREE.HemisphereLight(0xc8dcff, 0x20301f, 0.65));
+  const sun = new THREE.DirectionalLight(0xffffff, 1.0); sun.position.set(2500, 9000, 3000); scene.add(sun);
+  const fill = new THREE.DirectionalLight(0x8aa8ff, 0.3); fill.position.set(-5000, 3000, -6000); scene.add(fill);
+
+  // flat floor (RocketSim's floor plane), textured with the markings
+  const oct = [[-A.X + A.CORNER, -A.Y], [A.X - A.CORNER, -A.Y], [A.X, -A.Y + A.CORNER], [A.X, A.Y - A.CORNER],
+               [A.X - A.CORNER, A.Y], [-A.X + A.CORNER, A.Y], [-A.X, A.Y - A.CORNER], [-A.X, -A.Y + A.CORNER]];
+  const floorGeo = new THREE.ShapeGeometry(new THREE.Shape(oct.map(([x, y]) => new THREE.Vector2(x, y))));
+  const uv = floorGeo.attributes.uv, pos = floorGeo.attributes.position;
+  for (let i = 0; i < uv.count; i++) uv.setXY(i, (pos.getX(i) + A.X) / (2 * A.X), (pos.getY(i) + A.Y) / (2 * A.Y));
+  const floor = new THREE.Mesh(floorGeo, new THREE.MeshStandardMaterial({ map: floorTexture(), roughness: 0.9 }));
+  floor.rotation.x = -Math.PI / 2; scene.add(floor);
+
+  const glass = new THREE.MeshStandardMaterial({ color: 0xa9c8ff, transparent: true, opacity: 0.1, roughness: 0.15, metalness: 0.1, side: THREE.DoubleSide, depthWrite: false });
+  const seam = new THREE.LineBasicMaterial({ color: 0x6f8fb8, transparent: true, opacity: 0.35 });
+  const arenaGroup = new THREE.Group(); scene.add(arenaGroup);
+
+  // the real arena: RocketSim's soccar collision meshes, fetched from the viewer server
+  fetch("/api/arena").then(r => r.json()).then(m => {
+    const v = m.verts, t = m.tris;
+    const up = [], wall = [], goalB = [], goalO = [];
+    for (let i = 0; i < t.length; i += 3) {
+      const p = [t[i], t[i + 1], t[i + 2]].map(j => [v[3 * j], v[3 * j + 1], v[3 * j + 2]]);
+      const e1 = [p[1][0] - p[0][0], p[1][1] - p[0][1], p[1][2] - p[0][2]], e2 = [p[2][0] - p[0][0], p[2][1] - p[0][1], p[2][2] - p[0][2]];
+      const n = [e1[1] * e2[2] - e1[2] * e2[1], e1[2] * e2[0] - e1[0] * e2[2], e1[0] * e2[1] - e1[1] * e2[0]];
+      const len = Math.hypot(...n) || 1, nz = Math.abs(n[2] / len);
+      const cy = (p[0][1] + p[1][1] + p[2][1]) / 3, cz = (p[0][2] + p[1][2] + p[2][2]) / 3;
+      const inGoal = Math.abs(cy) > A.Y + 5 && cz < A.GOAL_H + 20;
+      const target = inGoal ? (cy < 0 ? goalB : goalO) : (nz > 0.7 && cz < 400 ? up : wall);
+      for (const q of p) { const w = V(q[0], q[1], q[2]); target.push(w.x, w.y, w.z); }
+    }
+    const mk = (arr, mat, withSeams) => {
+      if (!arr.length) return;
+      const geo = new THREE.BufferGeometry(); geo.setAttribute("position", new THREE.Float32BufferAttribute(arr, 3)); geo.computeVertexNormals();
+      const mesh = new THREE.Mesh(geo, mat); arenaGroup.add(mesh);
+      if (withSeams) arenaGroup.add(new THREE.LineSegments(new THREE.EdgesGeometry(geo, 28), seam));
+    };
+    const turf = new THREE.MeshStandardMaterial({ color: 0x2d6533, roughness: 0.9, side: THREE.DoubleSide, polygonOffset: true, polygonOffsetFactor: -2, polygonOffsetUnits: -2 });
+    const goalMat = c => new THREE.MeshStandardMaterial({ color: c, emissive: c, emissiveIntensity: 0.25, transparent: true, opacity: 0.55, roughness: 0.6, side: THREE.DoubleSide, depthWrite: false });
+    mk(up, turf, false); mk(wall, glass, true); mk(goalB, goalMat(0x2f7bff), true); mk(goalO, goalMat(0xff7a2a), true);
+    // the flat planes RocketSim adds: side walls between the ramps and corners, and the ceiling
+    for (const sx of [-1, 1]) {
+      const w = new THREE.Mesh(new THREE.PlaneGeometry(2 * 3360, 1400 - 350), glass);
+      w.position.copy(V(sx * A.X, 0, (350 + 1400) / 2)); w.rotation.y = Math.PI / 2; arenaGroup.add(w);
+    }
+    const ceil = new THREE.Mesh(new THREE.PlaneGeometry(2 * 3460, 2 * A.Y), new THREE.MeshBasicMaterial({ color: 0x9fbfff, transparent: true, opacity: 0.03, side: THREE.DoubleSide, depthWrite: false }));
+    ceil.position.copy(V(0, 0, A.Z)); ceil.rotation.x = Math.PI / 2; arenaGroup.add(ceil);
+    $("camHint").textContent = `arena: ${m.files} RocketSim collision meshes, ${(t.length / 3).toLocaleString()} triangles`;
+    setTimeout(() => { if ($("camHint").textContent.startsWith("arena:")) $("camHint").textContent = ""; }, 6000);
+  }).catch(e => console.warn("arena mesh unavailable", e));
+  // goal mouths: team-coloured frames at the exact goal size
+  for (const [s, col] of [[-1, 0x3d8bff], [1, 0xff8a3d]]) {
+    const mat = new THREE.MeshBasicMaterial({ color: col });
+    const bar = (w, h, d, x, z) => { const m = new THREE.Mesh(new THREE.BoxGeometry(w, h, d), mat); m.position.copy(V(x, s * (A.Y + 20), z)); scene.add(m); };
+    bar(24, A.GOAL_H, 24, -A.GOAL_W, A.GOAL_H / 2); bar(24, A.GOAL_H, 24, A.GOAL_W, A.GOAL_H / 2); bar(2 * A.GOAL_W + 24, 24, 24, 0, A.GOAL_H);
+    const l = new THREE.PointLight(col, 0.7, 4500); l.position.copy(V(0, s * A.Y, 500)); scene.add(l);
+  }
+
+  // boost pads
+  const padGroup = new THREE.Group(); scene.add(padGroup);
+  const padMeshes = [];
+  const padOn = new THREE.MeshBasicMaterial({ color: 0xe39a0b }), padOff = new THREE.MeshBasicMaterial({ color: 0x2c3326 });
+  const orbOn = new THREE.MeshBasicMaterial({ color: 0xffb320, transparent: true, opacity: 0.9 });
+  function buildPads() {
+    padGroup.clear(); padMeshes.length = 0;
+    pads.forEach(p => {
+      const big = p[2] > 72;
+      const base = new THREE.Mesh(new THREE.CylinderGeometry(big ? 150 : 70, big ? 150 : 70, 6, 32), padOn);
+      base.position.copy(V(p[0], p[1], 3)); padGroup.add(base);
+      let orb = null;
+      if (big) { orb = new THREE.Mesh(new THREE.SphereGeometry(55, 20, 14), orbOn); orb.position.copy(V(p[0], p[1], 160)); padGroup.add(orb); }
+      padMeshes.push({ base, orb });
+    });
+  }
+
+  // cars
+  function makeCar(team) {
+    const group = new THREE.Group(); group.matrixAutoUpdate = false;
+    const model = buildOctane(team); group.add(model);
+    const flameMat = new THREE.MeshBasicMaterial({ color: team === 0 ? 0x8cc4ff : 0xffbd7a, transparent: true, opacity: 0.85 });
+    const flame = new THREE.Mesh(new THREE.ConeGeometry(11, 80, 12), flameMat); flame.rotation.z = Math.PI / 2;
+    flame.position.set(OCTANE.hitboxOffset[0] - OCTANE.hitbox[0] / 2 - 40, OCTANE.hitboxOffset[2], 0); flame.visible = false; group.add(flame);
+    const shadow = new THREE.Mesh(new THREE.PlaneGeometry(130, 90), new THREE.MeshBasicMaterial({ color: 0x000000, transparent: true, opacity: 0.35, depthWrite: false }));
+    shadow.rotation.x = -Math.PI / 2; scene.add(shadow);
+    const marker = new THREE.Mesh(new THREE.ConeGeometry(12, 26, 4), new THREE.MeshBasicMaterial({ color: 0xffffff })); marker.rotation.x = Math.PI; scene.add(marker);
+    scene.add(group);
+    return { group, model, flame, shadow, marker, team };
+  }
+  const cars = [makeCar(0), makeCar(1)];
+
+  // ball
+  const ballMat = new THREE.MeshStandardMaterial({ map: ballTexture(), roughness: 0.45, metalness: 0.15, emissive: 0x111111 });
+  const ball = new THREE.Mesh(new THREE.SphereGeometry(A.BALL_R, 48, 32), ballMat); scene.add(ball);
+  const ballShadow = new THREE.Mesh(new THREE.CircleGeometry(A.BALL_R, 32), new THREE.MeshBasicMaterial({ color: 0x000000, transparent: true, opacity: 0.45, depthWrite: false }));
+  ballShadow.rotation.x = -Math.PI / 2; scene.add(ballShadow);
+
+  // optional user-supplied assets in viewer/assets (never committed)
+  fetch("/api/assets").then(r => r.json()).then(av => {
+    const tex = av["ball.png"] ? "/assets/ball.png" : av["ball.jpg"] ? "/assets/ball.jpg" : null;
+    if (tex) new THREE.TextureLoader().load(tex, t => { t.encoding = THREE.sRGBEncoding; ballMat.map = t; ballMat.needsUpdate = true; });
+    if (av["octane.glb"] && THREE.GLTFLoader) {
+      new THREE.GLTFLoader().load("/assets/octane.glb", gltf => {
+        for (const c of cars) {
+          const m = gltf.scene.clone(true);
+          const box = new THREE.Box3().setFromObject(m), size = box.getSize(new THREE.Vector3()), centre = box.getCenter(new THREE.Vector3());
+          const s = OCTANE.hitbox[0] / Math.max(size.x, 1e-6);
+          m.scale.setScalar(s);
+          m.position.set(OCTANE.hitboxOffset[0] - centre.x * s, OCTANE.hitboxOffset[2] - centre.y * s, -centre.z * s);
+          c.group.remove(c.model); c.model = m; c.group.add(m);
+        }
+      }, undefined, e => console.warn("octane.glb failed to load", e));
+    }
+  }).catch(() => {});
+
+  const controls = new THREE.OrbitControls(camera, renderer.domElement);
+  controls.enableDamping = true; controls.target.set(0, 300, 0); controls.maxDistance = 25000; controls.enabled = false;
+  function resize() { const w = vp.clientWidth, h = vp.clientHeight; renderer.setSize(w, h, false); camera.aspect = w / h; camera.updateProjectionMatrix(); }
+  window.addEventListener("resize", resize); resize();
+  return { renderer, scene, camera, controls, cars, ball, ballShadow, buildPads, padMeshes, padOn, padOff, lastT: performance.now(),
+           camPos: camera.position.clone(), camLook: new THREE.Vector3(0, 300, 0) };
+}
+
+function update3D(s) {
+  const S = R3, now = performance.now(), dt = Math.min(0.1, (now - S.lastT) / 1000); S.lastT = now;
+  if (s) {
+    s.a.cars.forEach((raw, i) => {
+      const c = carState(s, i), car = S.cars[c.team] || S.cars[i];
+      const F3 = V(c.f[0], c.f[1], c.f[2]).normalize(), U3 = V(c.u[0], c.u[1], c.u[2]).normalize();
+      const Rt = new THREE.Vector3().crossVectors(F3, U3).normalize(), U2 = new THREE.Vector3().crossVectors(Rt, F3).normalize();
+      const m = new THREE.Matrix4().makeBasis(F3, U2, Rt); m.setPosition(V(c.x, c.y, c.z));
+      car.group.matrix.copy(m); car.group.matrixWorldNeedsUpdate = true; car.group.visible = !c.demoed;
+      car.flame.visible = !!c.boosting && !c.demoed; if (car.flame.visible) car.flame.scale.set(1, 0.75 + Math.random() * 0.5, 1);
+      car.shadow.position.copy(V(c.x, c.y, 2)); car.shadow.rotation.z = c.yaw; car.shadow.visible = !c.demoed && c.z < 1500;
+      car.shadow.material.opacity = 0.35 * Math.max(0.15, 1 - c.z / 1500);
+      car.marker.visible = !!c.learner && !c.demoed && cam !== "ballcam";
+      car.marker.position.copy(V(c.x, c.y, c.z + 150 + 10 * Math.sin(now / 250)));
+    });
+    const b = ballState(s);
+    S.ball.position.copy(V(b.x, b.y, b.z));
+    if (b.w) { const w = V(b.w[0], b.w[1], b.w[2]); const ang = w.length() * dt * simSpeed; if (ang > 0) S.ball.rotateOnWorldAxis(w.normalize(), ang); }
+    S.ballShadow.position.copy(V(b.x, b.y, 3)); S.ballShadow.scale.setScalar(1 + b.z / 2500); S.ballShadow.material.opacity = 0.45 * Math.max(0.1, 1 - b.z / 2044);
+    const pd = s.a.pads;
+    if (pd && S.padMeshes.length === pd.length) pd.forEach((on, i) => { const pm = S.padMeshes[i]; pm.base.material = on ? S.padOn : S.padOff; if (pm.orb) { pm.orb.visible = on; pm.orb.position.y = 160 + 14 * Math.sin(now / 400 + i); } });
+    placeCamera(S, s, b, dt);
+  }
+  if (cam === "orbit") S.controls.update();
+  S.renderer.render(S.scene, S.camera);
+}
+
+function placeCamera(S, s, b, dt) {
+  if (cam === "orbit") return;
+  const ballV = V(b.x, b.y, b.z);
+  let want, look, stiff = 1.6;
+  if (cam === "broadcast") {
+    want = V(-A.X - 900, clamp(b.y * 0.85, -3800, 3800), 1700);
+    look = V(b.x * 0.5, b.y, Math.min(b.z, 800) * 0.6 + 80);
+  } else if (cam === "overhead") {
+    want = V(0, b.y * 0.35, 12500); look = V(0, b.y * 0.35, 0);
+  } else {
+    const i = s.a.cars.findIndex(k => k.learner), c = carState(s, i < 0 ? 0 : i);
+    const carV = V(c.x, c.y, c.z);
+    const dir = ballV.clone().sub(carV); dir.y = 0; if (dir.lengthSq() < 1) dir.set(1, 0, 0); dir.normalize();
+    want = carV.clone().sub(dir.clone().multiplyScalar(520)); want.y = c.z + 230;
+    look = carV.clone().lerp(ballV, 0.45); look.y = Math.min(look.y, c.z + 380);
+    // keep the camera inside the arena (three x = RL x, three -z = RL y, three y = RL z)
+    want.x = clamp(want.x, -A.X + 180, A.X - 180); want.z = clamp(want.z, -(A.Y - 180), A.Y - 180); want.y = clamp(want.y, 80, A.Z - 150);
+    stiff = 6;
+  }
+  // critically damped follow: frame-rate independent and without the steps a fixed lerp shows
+  const k = 1 - Math.exp(-stiff * dt);
+  S.camPos.lerp(want, k); S.camLook.lerp(look, Math.min(1, k * 1.5));
+  if (cam === "overhead") S.camera.up.set(1, 0, 0); else S.camera.up.set(0, 1, 0);
+  S.camera.position.copy(S.camPos); S.camera.lookAt(S.camLook);
+}
+
+// ================================================================= 2D top-down map
+const cv = $("field2d"), ctx = cv.getContext("2d");
+const trail = [];
+function toCanvas(x, y) {
+  const m = 30, W = cv.width - 2 * m, H = cv.height - 2 * m;
+  const sc = Math.min(W / (2 * (A.Y + A.GOAL_DEPTH)), H / (2 * A.X));
+  return [cv.width / 2 + y * sc, cv.height / 2 + x * sc, sc];
+}
+function draw2D(s) {
+  const [, , sc] = toCanvas(0, 0);
+  ctx.fillStyle = css("--bg"); ctx.fillRect(0, 0, cv.width, cv.height);
+  ctx.beginPath();
+  const pts = [[-A.X + A.CORNER, -A.Y], [A.X - A.CORNER, -A.Y], [A.X, -A.Y + A.CORNER], [A.X, A.Y - A.CORNER], [A.X - A.CORNER, A.Y], [-A.X + A.CORNER, A.Y], [-A.X, A.Y - A.CORNER], [-A.X, -A.Y + A.CORNER]];
+  pts.forEach(([x, y], i) => { const [a, b] = toCanvas(x, y); i ? ctx.lineTo(a, b) : ctx.moveTo(a, b); });
+  ctx.closePath(); ctx.fillStyle = css("--field"); ctx.fill(); ctx.lineWidth = 2; ctx.strokeStyle = css("--field-line"); ctx.stroke();
+  for (const [sg, col] of [[-1, css("--blue")], [1, css("--orange")]]) {
+    const [a1, b1] = toCanvas(-A.GOAL_W, sg * A.Y), [a2, b2] = toCanvas(A.GOAL_W, sg * (A.Y + A.GOAL_DEPTH));
+    ctx.fillStyle = col + "55"; ctx.fillRect(Math.min(a1, a2), Math.min(b1, b2), Math.abs(a2 - a1), Math.abs(b2 - b1));
+  }
+  let [a, b] = toCanvas(-A.X, 0), [c, d] = toCanvas(A.X, 0);
+  ctx.beginPath(); ctx.moveTo(a, b); ctx.lineTo(c, d); ctx.stroke();
+  [a, b] = toCanvas(0, 0); ctx.beginPath(); ctx.arc(a, b, 1000 * sc, 0, 2 * Math.PI); ctx.stroke();
+  const pd = s ? s.a.pads : null;
+  pads.forEach((p, i) => { const [px, py] = toCanvas(p[0], p[1]); const on = pd ? pd[i] : true; ctx.beginPath(); ctx.arc(px, py, (p[2] > 72 ? 190 : 110) * sc, 0, 2 * Math.PI); ctx.fillStyle = on ? css("--pad") + "cc" : "#3a3f2a55"; ctx.fill(); });
+  if (!s) return;
+  s.a.cars.forEach((raw, i) => {
+    const cc = carState(s, i), [px, py] = toCanvas(cc.x, cc.y);
+    ctx.save(); ctx.translate(px, py); ctx.rotate(Math.atan2(Math.cos(cc.yaw), Math.sin(cc.yaw)));
+    const L = 118 * sc * 3.2, W = 84 * sc * 3.2;
+    ctx.globalAlpha = cc.demoed ? 0.25 : 1; ctx.fillStyle = cc.team === 0 ? css("--blue") : css("--orange");
+    ctx.strokeStyle = cc.learner ? "#fff" : "#000"; ctx.lineWidth = cc.learner ? 2.5 : 1.5;
+    ctx.beginPath(); ctx.roundRect(-L / 2, -W / 2, L, W, 5); ctx.fill(); ctx.stroke(); ctx.restore();
+  });
+  const bb = ballState(s), [px, py] = toCanvas(bb.x, bb.y);
+  trail.push([px, py]); if (trail.length > 22) trail.shift();
+  ctx.strokeStyle = "#ffffff30"; ctx.lineWidth = 3; ctx.beginPath(); trail.forEach(([u, w], i) => i ? ctx.lineTo(u, w) : ctx.moveTo(u, w)); ctx.stroke();
+  ctx.beginPath(); ctx.arc(px, py, 93 * sc * 2.2, 0, 2 * Math.PI); ctx.fillStyle = css("--ball"); ctx.fill();
+}
+
+// ================================================================= HUD
+function gauge(canvas, boost, color) {
+  const g = canvas.getContext("2d"), w = canvas.width, c = w / 2;
+  g.clearRect(0, 0, w, w);
+  g.lineWidth = 12; g.strokeStyle = "#00000099"; g.beginPath(); g.arc(c, c, c - 10, 0.75 * Math.PI, 2.25 * Math.PI); g.stroke();
+  g.strokeStyle = color; g.beginPath(); g.arc(c, c, c - 10, 0.75 * Math.PI, 0.75 * Math.PI + 1.5 * Math.PI * clamp(boost / 100, 0, 1)); g.stroke();
+  g.fillStyle = "#fff"; g.font = "bold 34px system-ui"; g.textAlign = "center"; g.textBaseline = "middle"; g.fillText(Math.round(boost), c, c + 2);
+}
+let hudFrame = null;
+function updateHud(f) {
+  if (!f || f === hudFrame) return; hudFrame = f;
+  $("scoreB").textContent = $("hudB").textContent = f.score[0];
+  $("scoreO").textContent = $("hudO").textContent = f.score[1];
+  const left = Math.max(0, f.left), clk = `${Math.floor(left / 60)}:${String(Math.floor(left % 60)).padStart(2, "0")}`;
+  $("clock").textContent = $("hudClock").textContent = clk;
+  for (const c of f.cars) {
+    const k = c.team === 0 ? "B" : "O";
+    $(`car${k}Speed`).textContent = `${fmt(c.speed)} uu/s` + (c.speed >= 2200 ? " · supersonic" : "") + (c.demoed ? " · demoed" : "") + (c.jumped ? " · JUMPED" : "");
+    $(`car${k}BoostTxt`).textContent = Math.round(c.boost);
+    $(`car${k}Boost`).style.width = `${clamp(c.boost, 0, 100)}%`;
+    gauge($(`gauge${k}`), c.boost, c.team === 0 ? css("--blue") : css("--orange"));
+  }
+  if (f.goal !== null && f.goal !== undefined) {
+    const g = $("goalFlash"); g.textContent = f.goal === 0 ? "BLUE SCORES" : "ORANGE SCORES";
+    g.style.color = f.goal === 0 ? css("--blue") : css("--orange"); g.style.opacity = 1; setTimeout(() => g.style.opacity = 0, 1300);
+  }
+}
+
+// ================================================================= quality and stats
+function qualityScale() {
+  const q = (() => { try { return localStorage.getItem("viewerQuality") || "high"; } catch (e) { return "high"; } })();
+  const dpr = Math.min(2, window.devicePixelRatio || 1);
+  return q === "low" ? 0.6 : q === "balanced" ? Math.min(1, dpr) : dpr;
+}
+function applyQuality(q) {
+  try { localStorage.setItem("viewerQuality", q); } catch (e) {}
+  if (R3) { R3.renderer.setPixelRatio(qualityScale()); const vp = $("viewport"); R3.renderer.setSize(vp.clientWidth, vp.clientHeight, false); }
+}
+const frameTimes = []; let lastFrameAt = null, perfOn = false, glInfo = null;
+function recordFrame() {
+  const now = performance.now();
+  if (lastFrameAt !== null) { frameTimes.push(now - lastFrameAt); if (frameTimes.length > 240) frameTimes.shift(); }
+  lastFrameAt = now;
+}
+function glRenderer() {
+  if (glInfo || !R3) return glInfo || "–";
+  try { const gl = R3.renderer.getContext(), ext = gl.getExtension("WEBGL_debug_renderer_info");
+        glInfo = ext ? gl.getParameter(ext.UNMASKED_RENDERER_WEBGL) : gl.getParameter(gl.RENDERER); } catch (e) { glInfo = "unknown"; }
+  return glInfo;
+}
+setInterval(() => {
+  if (!perfOn || frameTimes.length < 10) return;
+  const ft = [...frameTimes].sort((a, b) => a - b), mean = ft.reduce((a, b) => a + b, 0) / ft.length;
+  const p95 = ft[Math.floor(ft.length * 0.95)], worst = ft[ft.length - 1];
+  const janky = frameTimes.filter(v => v > 1.6 * ft[ft.length >> 1]).length;
+  const lead = buf.length && renderT !== null ? buf[buf.length - 1].t - renderT : null;
+  const r = glRenderer(), soft = /swiftshader|software|basic render|llvmpipe/i.test(r);
+  $("perf").innerHTML = `<b>${Math.round(1000 / mean)} fps</b>  frame ${mean.toFixed(1)} ms  p95 ${p95.toFixed(1)}  worst <span class="${worst > 50 ? "bad" : "ok"}">${worst.toFixed(0)} ms</span>
+` +
+    `stutter frames (last ${frameTimes.length}): <span class="${janky > frameTimes.length * 0.05 ? "bad" : "ok"}">${janky}</span>
+` +
+    `buffer ${lead === null ? "–" : lead.toFixed(2) + " s"}  quality ${(() => { try { return localStorage.getItem("viewerQuality") || "high"; } catch (e) { return "high"; } })()}  scale ${R3 ? R3.renderer.getPixelRatio().toFixed(2) : "–"}
+` +
+    `GPU: <span class="${soft ? "bad" : ""}">${r}${soft ? "  (software rendering: hardware acceleration is off)" : ""}</span>`;
+}, 500);
+$("perfBtn").onclick = () => { perfOn = !perfOn; $("perf").hidden = !perfOn; $("perfBtn").classList.toggle("on", perfOn); };
+$("quality").value = (() => { try { return localStorage.getItem("viewerQuality") || "high"; } catch (e) { return "high"; } })();
+$("quality").onchange = e => applyQuality(e.target.value);
+document.addEventListener("keydown", e => { if (e.key === "f" || e.key === "F") $("perfBtn").click(); });
+
+// ================================================================= loop
+function loop() {
+  recordFrame();
+  const s = sample();
+  if (s) updateHud(s.a);
+  if (view === "3d" && R3) update3D(s); else draw2D(s);
+  requestAnimationFrame(loop);
+}
+function setView(v) {
+  view = HAS3D && R3 ? v : "2d";
+  document.querySelectorAll("[data-view]").forEach(b => b.classList.toggle("on", b.dataset.view === view));
+  $("field2d").hidden = view !== "2d";
+  if (R3) R3.renderer.domElement.style.display = view === "3d" ? "block" : "none";
+  $("camButtons").style.display = view === "3d" ? "" : "none";
+  if (!HAS3D) $("camHint").textContent = "3D unavailable (three.js did not load); showing the map";
+}
+function setCam(c) {
+  cam = c;
+  document.querySelectorAll("[data-cam]").forEach(b => b.classList.toggle("on", b.dataset.cam === c));
+  if (R3) { R3.controls.enabled = c === "orbit"; if (c === "orbit") R3.controls.target.copy(R3.camLook); }
+  $("camHint").textContent = c === "orbit" ? "drag to rotate · right-drag to pan · scroll to zoom" : "";
+}
+document.querySelectorAll("[data-view]").forEach(b => b.onclick = () => setView(b.dataset.view));
+document.querySelectorAll("[data-cam]").forEach(b => b.onclick = () => setCam(b.dataset.cam));
+
+// ================================================================= stream
+function connect() {
+  const es = new EventSource("/api/stream");
+  es.onmessage = ev => {
+    const m = JSON.parse(ev.data);
+    if (m.type === "match") {
+      pads = m.pads; simSpeed = m.speed || 1; buf = []; renderT = null; lastWall = null; trail.length = 0;
+      if (R3) R3.buildPads();
+      const side = m.learner_team === 0 ? "blue" : "orange";
+      $("matchWho").innerHTML = `<b>${m.learner_name || "learner"}</b> (${side}, marked ▼) vs <b>${m.opponent_name || "opponent"}</b> · match ${m.match}`;
+      $("carBName").textContent = m.learner_team === 0 ? "Blue · training bot" : "Blue · opponent";
+      $("carOName").textContent = m.learner_team === 1 ? "Orange · training bot" : "Orange · opponent";
+      $("viewerCkpt").textContent = m.ckpt ? `${fmt(m.ckpt)} steps` + (m.forbid_jump ? " · no-jump mask on" : "") : "–";
+      $("simError").textContent = "";
+    } else if (m.type === "frame") {
+      pushFrame(m);
+    } else if (m.type === "error") {
+      $("simError").textContent = m.error;
+    }
+  };
+  es.onerror = () => { es.close(); setTimeout(connect, 2000); };
+}
+
+// ================================================================= dashboard
+function chart(canvas, series, opts = {}) {
+  const dpr = window.devicePixelRatio || 1, w = canvas.clientWidth, h = canvas.clientHeight;
+  if (!w || !h) return;
+  canvas.width = w * dpr; canvas.height = h * dpr;
+  const g = canvas.getContext("2d"); g.scale(dpr, dpr); g.clearRect(0, 0, w, h);
+  const all = series.flatMap(s => s.pts);
+  if (!all.length) { g.fillStyle = css("--muted"); g.font = "12px system-ui"; g.fillText("no data yet", 8, 20); return; }
+  const xs = all.map(p => p[0]), ys = all.map(p => p[1]);
+  let x0 = Math.min(...xs), x1 = Math.max(...xs), y0 = opts.y0 ?? Math.min(...ys), y1 = opts.y1 ?? Math.max(...ys);
+  if (x1 === x0) x1 = x0 + 1; if (y1 === y0) { y1 = y0 + 1; y0 = y0 - 1; }
+  const L = 52, Rr = 8, T = 8, B = 18;
+  const X = v => L + (v - x0) / (x1 - x0) * (w - L - Rr), Y = v => h - B - (v - y0) / (y1 - y0) * (h - T - B);
+  g.strokeStyle = css("--line"); g.lineWidth = 1; g.fillStyle = css("--muted"); g.font = "10px system-ui";
+  for (let i = 0; i <= 3; i++) { const v = y0 + (y1 - y0) * i / 3, yy = Y(v); g.beginPath(); g.moveTo(L, yy); g.lineTo(w - Rr, yy); g.stroke(); g.fillText(opts.yfmt ? opts.yfmt(v) : v.toFixed(2), 4, yy + 3); }
+  g.fillText(opts.xfmt ? opts.xfmt(x0) : x0, L, h - 4);
+  const rl = opts.xfmt ? opts.xfmt(x1) : x1; g.fillText(rl, w - Rr - g.measureText(rl).width, h - 4);
+  for (const s of series) {
+    g.strokeStyle = s.color; g.lineWidth = 1.6; g.beginPath(); s.pts.forEach((p, i) => i ? g.lineTo(X(p[0]), Y(p[1])) : g.moveTo(X(p[0]), Y(p[1]))); g.stroke();
+    if (s.dots) { g.fillStyle = s.color; s.pts.forEach(p => { g.beginPath(); g.arc(X(p[0]), Y(p[1]), 2.5, 0, 7); g.fill(); }); }
+  }
+}
+const PALETTE = ["#3d8bff", "#ff8a3d", "#3ecf8e", "#f5c451", "#c678dd", "#56b6c2", "#ff5d5d", "#9aa5b1", "#e06c75"];
+const legend = (el, items) => { el.innerHTML = items.map(([n, c]) => `<span style="--c:${c}">${n}</span>`).join(""); };
+const bn = v => (v / 1e9).toFixed(3) + "B";
+const hhmm = v => new Date(v).toISOString().slice(11, 16) + "Z";
+const ts = s => Date.parse(s.includes("+") || s.endsWith("Z") ? s : s + "Z");
+
+async function refreshSeries() {
+  try {
+    const s = await (await fetch("/api/series")).json();
+    chart($("chSteps"), [{ color: PALETTE[0], pts: s.steps.map(p => [ts(p[0]), p[1]]) }], { xfmt: hhmm, yfmt: bn });
+    const sps = s.realised_sps.map(p => [ts(p[0]), p[1]]);
+    chart($("chSps"), [{ color: PALETTE[2], pts: sps }], { xfmt: hhmm, yfmt: v => Math.round(v / 1000) + "k", y0: 0 });
+    const want = ["VelocityPlayerToBallReward", "StrongTouchReward", "FaceBallReward", "SaveBoostReward", "PickupBoostReward", "VelocityBallToGoalReward"];
+    const rs = want.filter(k => s.metrics[k]).map((k, i) => ({ name: k.replace("Reward", ""), color: PALETTE[i], pts: s.metrics[k] }));
+    chart($("chRew"), rs, { xfmt: bn }); legend($("lgRew"), rs.map(r => [r.name, r.color]));
+    const tr = [["bc_win_rate", "BallChaser"], ["v3_win_rate", "v3"], ["nc_win_rate", "Necto"], ["nx_win_rate", "Nexto (trend, 90 s)"]]
+      .map(([k, n], i) => ({ name: n, color: PALETTE[i], dots: true, pts: s.trend.filter(r => r[k] != null).map(r => [r.steps, r[k]]) }));
+    chart($("chTrend"), tr, { xfmt: bn, y0: 0, y1: 1, yfmt: v => Math.round(v * 100) + "%" }); legend($("lgTrend"), tr.map(r => [r.name, r.color]));
+    const last = sps[sps.length - 1]; $("sps").textContent = last ? Math.round(last[1]).toLocaleString("en-US") : "–";
+  } catch (e) { console.warn("series refresh failed, retrying", e); }
+}
+
+async function refreshStatus() {
+  try {
+    const s = await (await fetch("/api/status")).json();
+    $("runName").textContent = `run ${s.run}`;
+    $("steps").textContent = fmt(s.steps);
+    $("logAge").textContent = s.log_age_s == null ? "–" : `${Math.round(s.log_age_s)} s ago`;
+    $("liveDot").className = "dot " + (s.log_age_s == null ? "dead" : s.log_age_s < 60 ? "live" : s.log_age_s < 600 ? "stale" : "dead");
+    $("stage").textContent = s.stage ? `stage ${s.stage.stage} · γ ${s.stage.gamma} · LR ${s.stage.lr} · ${s.stage.source}` : "–";
+    const ch = s.opponent_control && s.opponent_control.chance != null ? s.opponent_control.chance : s.config.external_opponent_chance;
+    $("oppCfg").textContent = `${s.config.external_opponent || "none"} at chance ${ch}` + (s.opponent_control.frozen ? " (frozen)" : "");
+    $("archive").textContent = s.archives && s.archives.length ? `${fmt(s.archives[0])}  (${s.archives.length} archived)` : "–";
+    $("audit").textContent = s.last_jump_audit || "–";
+    $("simState").textContent = `viewer: ${s.sim.state}`;
+    if (s.sim.error) $("simError").textContent = s.sim.error;
+    const b = [];
+    b.push(s.nonzero_jump_audits_in_tail === 0 ? ["jumps: 0", "ok"] : [`JUMPS: ${s.nonzero_jump_audits_in_tail}`, "bad"]);
+    b.push([`self-play lines ${s.opponent_lines_in_tail.none} · vs v3 ${s.opponent_lines_in_tail.external}`, ""]);
+    if (s.markers["HARD_STOP_JUMP.txt"]) b.push(["HARD STOP", "bad"]);
+    if (s.markers["CONFIG_CHECK_FAILED.txt"]) b.push(["config check failed", "bad"]);
+    b.push(s.markers.WATCHDOG_HOLD ? ["watchdog hold (stopped)", "warn"] : ["watchdog armed", "ok"]);
+    if (s.stop_at) b.push([s.stop_at.replace(/^\S+\s/, ""), s.stop_at.includes("decision point reached") ? "warn" : ""]);
+    $("badges").innerHTML = b.map(([t, c]) => `<span class="badge ${c}">${t}</span>`).join("");
+  } catch (e) {
+    $("liveDot").className = "dot dead"; $("runName").textContent = "viewer server not reachable";
+  }
+}
+
+// ================================================================= start
+if (HAS3D) { try { R3 = build3D(); } catch (e) { console.error("3D init failed", e); R3 = null; } }
+setView(R3 ? "3d" : "2d");
+requestAnimationFrame(loop);
+connect();
+refreshStatus();
+window.addEventListener("load", () => refreshSeries());
+setTimeout(refreshSeries, 1500);
+setInterval(refreshStatus, 3000);
+setInterval(refreshSeries, 20000);
+window.addEventListener("resize", refreshSeries);
+</script>
+</body>
+</html>

@@ -1,0 +1,4 @@
+# Your own files, used by the viewer if present. Not committed.
+*
+!.gitignore
+!README.txt
